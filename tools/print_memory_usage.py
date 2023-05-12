@@ -62,7 +62,7 @@ kernel_functions = []
 def usage(message):
     """Prints out an error message and usage"""
     if message != "":
-        print("error: " + message)
+        print(f"error: {message}")
     print("""Usage: print_memory_usage.py ELF
 Options:
   -dn, --depth=n      Group symbols at depth n or greater. E.g.,
@@ -79,7 +79,7 @@ def process_section_line(line):
     # pylint: disable=anomalous-backslash-in-string,line-too-long
     match = re.search('^\S+\s+\.(text|relocate|sram|stack|app_memory)\s+(\S+).+', line)
     if match != None:
-        sections[match.group(1)] = int(match.group(2), 16)
+        sections[match[1]] = int(match[2], 16)
 
  # Take a Rust-style symbol of '::' delineated names and trim the last
  # one if it is a hash.  Many symbols have hashes appended which just
@@ -90,12 +90,10 @@ def trim_hash_from_symbol(symbol):
     # Remove the hash off the end
     tokens = symbol.split('::')
     last = tokens[-1]
-    if last[0] == 'h':
-        tokens = tokens[:-1] # Trim off hash if it exists
-        trimmed_name = "::".join(tokens) # reassemble
-        return trimmed_name
-    else:
+    if last[0] != 'h':
         return symbol
+    tokens = tokens[:-1] # Trim off hash if it exists
+    return "::".join(tokens)
 
 def parse_mangled_name(name):
     """Take a potentially mangled symbol name and demangle it to its
@@ -109,13 +107,13 @@ def parse_mangled_name(name):
     # implementing. This code parses only the structure name, so all
     # methods that are trait implementations are just clumped under the
     # name of the structure. -pal
-    if corrected_name[0:5] == "_$LT$":
+    if corrected_name[:5] == "_$LT$":
         # Trim off the _$LT$, then truncate at next $, this will extract
         # capsules..ieee802154..driver..RadioDriver
         corrected_name = corrected_name[5:]
         endpos = corrected_name.find("$")
         if endpos > 0:
-            corrected_name = corrected_name[0:endpos]
+            corrected_name = corrected_name[:endpos]
 
     return corrected_name
 
@@ -127,10 +125,10 @@ def process_symbol_line(line):
     # pylint: disable=line-too-long,anomalous-backslash-in-string
     match = re.search('^(\S+)\s+\w+\s+\w*\s+\.(text|relocate|sram|stack|app_memory)\s+(\S+)\s+(.+)', line)
     if match != None:
-        addr = int(match.group(1), 16)
-        segment = match.group(2)
-        size = int(match.group(3), 16)
-        name = match.group(4)
+        addr = int(match[1], 16)
+        segment = match[2]
+        size = int(match[3], 16)
+        name = match[4]
 
         # Initialized data: part of the flash image, then copied into RAM
         # on start. The .data section in normal hosted C.
@@ -141,8 +139,6 @@ def process_symbol_line(line):
             except cxxfilt.InvalidName:
                 kernel_initialized.append((name, addr, size, 0))
 
-        # Uninitialized data, stored in a zeroed RAM section. The
-        # .bss section in normal hosted C.
         elif segment == "sram":
             try:
                 demangled = parse_mangled_name(name)
@@ -150,21 +146,21 @@ def process_symbol_line(line):
             except cxxfilt.InvalidName:
                 kernel_uninitialized.append((name, addr, size, 0))
 
-        # Code and embedded data.
         elif segment == "text":
             # pylint: disable=anomalous-backslash-in-string
             match = re.search('\$(((\w+\.\.)+)(\w+))\$', name)
-            if match != None:
-                symbol = match.group(1)
-                symbol = symbol.replace('..', '::')
-                symbol = trim_hash_from_symbol(symbol)
-                kernel_functions.append((symbol, addr, size, 0))
-            else:
+            if match is None:
                 try:
                     symbol = parse_mangled_name(name)
                     kernel_functions.append((symbol, addr, size, 0))
                 except cxxfilt.InvalidName:
                     kernel_functions.append((name, addr, size, 0))
+
+            else:
+                symbol = match[1]
+                symbol = symbol.replace('..', '::')
+                symbol = trim_hash_from_symbol(symbol)
+                kernel_functions.append((symbol, addr, size, 0))
 
 def print_section_information():
     """Print out the ELF's section information (RAM and Flash use)."""
@@ -183,15 +179,15 @@ def print_section_information():
     flash_size = text_size + relocate_size
     ram_size = stack_size + sram_size + relocate_size
 
-    print("Kernel occupies " + str(flash_size) + " bytes of flash")
+    print(f"Kernel occupies {str(flash_size)} bytes of flash")
     print("  " + "{:>6}".format(text_size) + "\tcode and constant strings")
     print("  " + "{:>6}".format(relocate_size) + "\tvariable initializers")
-    print("Kernel occupies " + str(ram_size) + " bytes of RAM")
+    print(f"Kernel occupies {str(ram_size)} bytes of RAM")
     print("  " + "{:>6}".format(stack_size) + "\tstack")
     print("  " + "{:>6}".format(sram_size) + "\tuninitialized variables")
     print("  " + "{:>6}".format(relocate_size) + "\tinitialized variables")
     print("  " + "{:>6}".format(sram_size + relocate_size) + "\tvariables total")
-    print("Applications allocated " + str(app_size) + " bytes of RAM")
+    print(f"Applications allocated {str(app_size)} bytes of RAM")
 
 # Take a list of 'symbols' and group them into in 'groups' as aggregates
 # for condensing. Names are '::' delimited hierarchies. The aggregate
@@ -217,8 +213,8 @@ def group_symbols(groups, symbols, waste, section):
         # If we find a gap between symbol+size and the next symbol, we might
         # have waste. But this is only true if it's not the first symbol and
         # this is actually a variable and just just a symbol (e.g., _estart)
-        if addr != expected_addr and expected_addr != 0 and size != 0 and (waste or verbose):
-            print("  ! " + str(addr - expected_addr) + " bytes wasted after " + prev_symbol)
+        if addr != expected_addr and expected_addr != 0 and (waste or verbose):
+            print(f"  ! {str(addr - expected_addr)} bytes wasted after {prev_symbol}")
         waste_sum = waste_sum + (addr - expected_addr)
         tokens = symbol.split("::")
         key = symbol[0] # Default to first character (_) if not a proper symbol
@@ -228,11 +224,15 @@ def group_symbols(groups, symbols, waste, section):
             # The symbol isn't a standard mangled Rust name. These rules are
             # based on observation.
             # .Lanon* and str.* are embedded string.
-            if symbol[0:6] == '.Lanon' or symbol[0:5] == "anon." or symbol[0:4] == 'str.':
+            if (
+                symbol[:6] == '.Lanon'
+                or symbol[:5] == "anon."
+                or symbol[:4] == 'str.'
+            ):
                 key = "Constant strings"
-            elif symbol[0:8] == ".hidden ":
+            elif symbol[:8] == ".hidden ":
                 key = "ARM aeabi support"
-            elif symbol[0:3] == "_ZN":
+            elif symbol[:3] == "_ZN":
                 key = "Unidentified auto-generated"
             else:
                 key = "Unmangled globals (C-like code)"
@@ -241,7 +241,7 @@ def group_symbols(groups, symbols, waste, section):
             # Packages have a trailing :: while other categories don't;
             # this allows us to disambiguate when * is relevant or not
             # in printing.
-            key = "::".join(tokens[0:symbol_depth]) + "::"
+            key = "::".join(tokens[:symbol_depth]) + "::"
             name = "::".join(tokens[symbol_depth:])
 
             if key in groups.keys():
@@ -254,7 +254,7 @@ def group_symbols(groups, symbols, waste, section):
         prev_symbol = symbol
 
     if waste and waste_sum > 0:
-        print("Total of " + str(waste_sum) + " bytes wasted in " + section)
+        print(f"Total of {str(waste_sum)} bytes wasted in {section}")
 
 def string_for_group(key, padding_size, group_size, num_elements):
     """Return the string for a group of variables, with padding added on the
@@ -262,18 +262,11 @@ def string_for_group(key, padding_size, group_size, num_elements):
        and number of elements in it."""
     if num_elements == 1: # If there's a single symbol (a variable), print it.
         key = key[:-2]
-        key = key + ":"
-        key = key.ljust(padding_size + 2, ' ')
-        return ("  " + key + str(group_size) + " bytes\n")
+        key = f"{key}:"
     else: # If there's more than one, print the key as a namespace
-        if key[-2:] == "::":
-            key = key + "*"
-            key = key.ljust(padding_size + 2, ' ')
-            return ("  " + key + str(group_size) + " bytes\n")
-        else:
-            key = key + ":"
-            key = key.ljust(padding_size + 2, ' ')
-            return ("  " + key + str(group_size) + " bytes\n")
+        key = f"{key}*" if key[-2:] == "::" else f"{key}:"
+    key = key.ljust(padding_size + 2, ' ')
+    return f"  {key}{str(group_size)}" + " bytes\n"
 
 def print_groups(title, groups):
     """Print title, then all of the variable groups in groups."""
@@ -290,7 +283,7 @@ def print_groups(title, groups):
         output = output + string_for_group(key, max_string_len, group_size, len(symbols))
         group_sum = group_sum + group_size
 
-    print(title + ": " + str(group_sum) + " bytes")
+    print(f"{title}: {str(group_sum)} bytes")
     print(output, end = ' ')
 
 def print_symbol_information():
@@ -305,7 +298,7 @@ def print_symbol_information():
     print_groups("Variable groups (RAM)", variable_groups)
 
     print()
-    print("Embedded data (in flash): " + str(padding_text) + " bytes")
+    print(f"Embedded data (in flash): {str(padding_text)} bytes")
     print()
     function_groups = {}
     # Embedded constants in code (e.g., after functions) aren't counted
@@ -343,14 +336,14 @@ def parse_options(opts):
     long_valid = ['depth=', 'verbose', 'show-waste']
     optlist, leftover = getopt.getopt(opts, valid, long_valid)
     for (opt, val) in optlist:
-        if opt == '-d' or opt == '--depth':
+        if opt in ['-d', '--depth']:
             symbol_depth = int(val)
-        elif opt == '-v' or opt == '--verbose':
+        elif opt in ['-v', '--verbose']:
             verbose = True
-        elif opt == '-s' or opt == '--show-waste':
+        elif opt in ['-s', '--show-waste']:
             show_waste = True
         else:
-            usage("unrecognized option: " + opt)
+            usage(f"unrecognized option: {opt}")
             return []
 
     return leftover
@@ -361,8 +354,6 @@ if len(arguments) < 1:
     usage("no ELF specified")
     sys.exit(-1)
 
- # The ELF is always the last argument; pull it out, then parse
- # the others.
 elf_name = ""
 options = arguments
 try:
@@ -376,25 +367,25 @@ except getopt.GetoptError as err:
     usage(str(err))
     sys.exit(-1)
 
-header_lines = os.popen('arm-none-eabi-objdump -f ' + elf_name).readlines()
+header_lines = os.popen(f'arm-none-eabi-objdump -f {elf_name}').readlines()
 
-print("Tock memory usage report for " + elf_name)
+print(f"Tock memory usage report for {elf_name}")
 arch = "UNKNOWN"
 
 for hline in header_lines:
     # pylint: disable=anomalous-backslash-in-string
     hmatch = re.search('file format (\S+)', hline)
     if hmatch != None:
-        arch = hmatch.group(1)
+        arch = hmatch[1]
         if arch != 'elf32-littlearm':
-            usage(arch + " architecture not supported, only elf32-littlearm supportd")
+            usage(f"{arch} architecture not supported, only elf32-littlearm supportd")
             sys.exit(-1)
 
 if arch == "UNKNOWN":
     usage("could not detect architecture of ELF")
     sys.exit(-1)
 
-objdump_lines = os.popen('arm-none-eabi-objdump -x ' + elf_name).readlines()
+objdump_lines = os.popen(f'arm-none-eabi-objdump -x {elf_name}').readlines()
 objdump_output_section = "start"
 
 for oline in objdump_lines:

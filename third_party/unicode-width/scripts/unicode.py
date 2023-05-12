@@ -54,11 +54,10 @@ surrogate_codepoints = (0xd800, 0xdfff)
 
 def fetch(f):
     if not os.path.exists(os.path.basename(f)):
-        os.system("curl -O http://www.unicode.org/Public/UNIDATA/%s"
-                  % f)
+        os.system(f"curl -O http://www.unicode.org/Public/UNIDATA/{f}")
 
     if not os.path.exists(os.path.basename(f)):
-        sys.stderr.write("cannot load %s" % f)
+        sys.stderr.write(f"cannot load {f}")
         exit(1)
 
 def is_surrogate(n):
@@ -97,15 +96,10 @@ def load_unicode_data(f):
                 gencats[cat] = []
             gencats[cat].append(code)
 
-    gencats = group_cats(gencats)
-
-    return gencats
+    return group_cats(gencats)
 
 def group_cats(cats):
-    cats_out = {}
-    for cat in cats:
-        cats_out[cat] = group_cat(cats[cat])
-    return cats_out
+    return {cat: group_cat(cats[cat]) for cat in cats}
 
 def group_cat(cat):
     cat_out = []
@@ -113,8 +107,7 @@ def group_cat(cat):
     cur_start = letters.pop(0)
     cur_end = cur_start
     for letter in letters:
-        assert letter > cur_end, \
-            "cur_end: %s, letter: %s" % (hex(cur_end), hex(letter))
+        assert letter > cur_end, f"cur_end: {hex(cur_end)}, letter: {hex(letter)}"
         if letter == cur_end + 1:
             cur_end = letter
         else:
@@ -128,10 +121,7 @@ def format_table_content(f, content, indent):
     first = True
     for chunk in content.split(","):
         if len(line) + len(chunk) < 98:
-            if first:
-                line += chunk
-            else:
-                line += ", " + chunk
+            line += chunk if first else f", {chunk}"
             first = False
         else:
             f.write(line + ",\n")
@@ -151,21 +141,18 @@ def load_east_asian_width(want_widths, except_cats):
         d_lo = 0
         d_hi = 0
         cat = None
-        m = re1.match(line)
-        if m:
-            d_lo = m.group(1)
-            d_hi = m.group(1)
-            width = m.group(2)
-            cat = m.group(3)
+        if m := re1.match(line):
+            d_lo = m[1]
+            d_hi = m[1]
+            width = m[2]
+            cat = m[3]
+        elif m := re2.match(line):
+            d_lo = m[1]
+            d_hi = m[2]
+            width = m[3]
+            cat = m[4]
         else:
-            m = re2.match(line)
-            if m:
-                d_lo = m.group(1)
-                d_hi = m.group(2)
-                width = m.group(3)
-                cat = m.group(4)
-            else:
-                continue
+            continue
         if cat in except_cats or width not in want_widths:
             continue
         d_lo = int(d_lo, 16)
@@ -178,13 +165,10 @@ def load_east_asian_width(want_widths, except_cats):
 def escape_char(c):
     return "'\\u{%x}'" % c
 
-def emit_table(f, name, t_data, t_type = "&'static [(char, char)]", is_pub=True,
-        pfun=lambda x: "(%s,%s)" % (escape_char(x[0]), escape_char(x[1])), is_const=True):
-    pub_string = "const"
-    if not is_const:
-        pub_string = "let"
+def emit_table(f, name, t_data, t_type = "&'static [(char, char)]", is_pub=True, pfun=lambda x: f"({escape_char(x[0])},{escape_char(x[1])})", is_const=True):
+    pub_string = "let" if not is_const else "const"
     if is_pub:
-        pub_string = "pub " + pub_string
+        pub_string = f"pub {pub_string}"
     f.write("    %s %s: %s = &[\n" % (pub_string, name, t_type))
     data = ""
     first = True
@@ -235,8 +219,14 @@ def emit_charwidth_module(f, width_table):
 
     f.write("    // character width table. Based on Markus Kuhn's free wcwidth() implementation,\n")
     f.write("    //     http://www.cl.cam.ac.uk/~mgk25/ucs/wcwidth.c\n")
-    emit_table(f, "charwidth_table", width_table, "&'static [(char, char, u8, u8)]", is_pub=False,
-            pfun=lambda x: "(%s,%s,%s,%s)" % (escape_char(x[0]), escape_char(x[1]), x[2], x[3]))
+    emit_table(
+        f,
+        "charwidth_table",
+        width_table,
+        "&'static [(char, char, u8, u8)]",
+        is_pub=False,
+        pfun=lambda x: f"({escape_char(x[0])},{escape_char(x[1])},{x[2]},{x[3]})",
+    )
     f.write("}\n\n")
 
 def remove_from_wtable(wtable, val):
@@ -255,8 +245,12 @@ def remove_from_wtable(wtable, val):
             elif wt_hi == val:
                 wtable_out.append((wt_lo, wt_hi-1, width, width_cjk))
             else:
-                wtable_out.append((wt_lo, val-1, width, width_cjk))
-                wtable_out.append((val+1, wt_hi, width, width_cjk))
+                wtable_out.extend(
+                    (
+                        (wt_lo, val - 1, width, width_cjk),
+                        (val + 1, wt_hi, width, width_cjk),
+                    )
+                )
     if wtable:
         wtable_out.extend(wtable)
     return wtable_out
